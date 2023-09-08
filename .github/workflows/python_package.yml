@@ -1,0 +1,78 @@
+name: python_package
+
+on:
+  pull_request:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+*"
+  workflow_dispatch:
+
+jobs:
+  python_package:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10"]
+    env:
+      PIPX_VERSION: "1.2.0"
+      POETRY_VERSION: "1.2.0"
+      POETRY_VIRTUALENVS_IN_PROJECT: true
+    steps:
+      - uses: actions/checkout@main
+      - uses: actions/setup-python@main
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Setting up contextual variables
+        run: |
+          REPO_NAME=$(echo ${{ github.repository }} | cut -d / -f 2)
+          echo "REPO_NAME=$REPO_NAME" >> $GITHUB_ENV
+          REPO_NAME_UNDERSCORE=$(echo $REPO_NAME | tr '-' '_')
+          echo "REPO_NAME_UNDERSCORE=$REPO_NAME_UNDERSCORE" >> $GITHUB_ENV
+          GIT_TAG_VERSION=$(echo ${{ github.ref }} | cut -d / -f 3)
+          echo "GIT_TAG_VERSION=$GIT_TAG_VERSION" >> $GITHUB_ENV
+      - name: Set up Poetry cache for Python dependencies
+        uses: actions/cache@main
+        if: startsWith(runner.os, 'Linux')
+        with:
+          path: ~/.cache/pypoetry
+          key: ${{ runner.os }}-poetry-${{ hashFiles('**/poetry.lock') }}
+          restore-keys: ${{ runner.os }}-poetry-
+      - name: Install pipx for Python ${{ matrix.python-version }}
+        run: python -m pip install "pipx==$PIPX_VERSION"
+      - name: Install Poetry
+        run: pipx install "poetry==$POETRY_VERSION"
+      - name: Ensure path for Poetry
+        run: |
+          pipx ensurepath
+      - name: Test Poetry version
+        run: |
+          POETRY_VERSION_INSTALLED=$(poetry -V)
+          echo "The POETRY_VERSION environment variable is set to $POETRY_VERSION."
+          echo "The installed Poetry version is $POETRY_VERSION_INSTALLED."
+          case $POETRY_VERSION_INSTALLED in
+          *$POETRY_VERSION*) echo "Poetry version correct." ;;
+          *) echo "Poetry version incorrect." && exit 1 ;;
+          esac
+      - name: Build Poetry directory and files
+        run: poetry new --src ${{ env.REPO_NAME }} #Change my-package for rd-lab-nomduprojet?
+      - name: Move files to Poetry folders
+        run: |
+          mv src/* ${{ env.REPO_NAME }}/src/
+          mv tests/* ${{ env.REPO_NAME }}/tests/
+          mv requirements.txt ${{ env.REPO_NAME }}/ 
+          cd ${{ env.REPO_NAME }}/
+      - name: Install dependencies
+        working-directory: ./${{ env.REPO_NAME }}
+        run: cat requirements.txt | xargs poetry add
+      - name: Run unit tests
+        working-directory: ./${{ env.REPO_NAME }}
+        run: poetry run pytest tests
+      - name: Build Python package
+        working-directory: ./${{ env.REPO_NAME }}
+        run: |
+          sed -i 's/version = "0\.1\.0"/version = "${{ env.GIT_TAG_VERSION }}"/' pyproject.toml
+          poetry build
+      - name: Push to release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: ./${{ env.REPO_NAME }}/dist/${{ env.REPO_NAME_UNDERSCORE }}-${{ env.GIT_TAG_VERSION }}-py3-none-any.whl

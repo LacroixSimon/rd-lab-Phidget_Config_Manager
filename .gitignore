@@ -1,0 +1,8 @@
+# Log files
+*.log
+
+# Any folder starting with . except .github
+.*/
+!.github
+# Scripts files
+*.bat
